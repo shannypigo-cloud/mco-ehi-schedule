@@ -8,7 +8,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
   :root{
     /* Horizon MLS brand palette, sampled from the logo/scorecard */
@@ -126,9 +125,6 @@
   }
   .action-btn svg{ flex:none; }
   .action-btn.pdf{ background: var(--navy); color:#fff; }
-  .action-btn.whatsapp{ background:#25D366; color:#fff; }
-  .action-btn.sms{ background: var(--orange); color:#fff; }
-  .action-btn.email{ background:#fff; color:var(--navy); border:1px solid var(--line); }
 
   /* ---------- Toggle row (position / shift filters) ---------- */
   .toggle-row{ display:flex; gap:8px; flex-wrap:wrap; padding: 8px 12px 4px; }
@@ -364,17 +360,6 @@
     .stat-grid{ grid-template-columns: repeat(4,1fr); }
     .stat-card, .dept-card{ break-inside: avoid; }
   }
-
-  /* Same hide-list as print, toggled by JS right before the html2canvas
-     capture used for the "Export PDF" share flow (so the PDF matches the
-     visual look of the app, minus the interactive-only chrome). */
-  body.exporting header.top{ position:static; }
-  body.exporting .day-rail, body.exporting .action-bar, body.exporting .filter-row,
-  body.exporting .toggle-row, body.exporting .chev, body.exporting .actions,
-  body.exporting .roadmap, body.exporting .off-toggle, body.exporting .off-list{
-    display:none !important;
-  }
-  body.exporting .card{ break-inside: avoid; }
 </style>
 </head>
 <body>
@@ -399,18 +384,6 @@
     <button class="action-btn pdf" id="btnExportPdf">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
       Export PDF
-    </button>
-    <button class="action-btn whatsapp" id="btnWhatsApp">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15L2 22l5.2-1.4A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3.1.8.8-3-.2-.3A8.2 8.2 0 1 1 12 20.2Zm4.5-6.1c-.2-.1-1.4-.7-1.7-.8-.2-.1-.4-.1-.6.1-.2.2-.6.8-.8 1-.1.2-.3.2-.5.1-.2-.1-1-.4-2-1.2-.7-.6-1.2-1.4-1.4-1.7-.1-.2 0-.4.1-.5.1-.1.2-.3.4-.4.1-.2.2-.3.2-.4.1-.2 0-.4 0-.5s-.6-1.4-.8-1.9c-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.5.1-.7.3-.2.2-.9.9-.9 2.2s1 2.6 1.1 2.7c.1.2 1.9 3 4.7 4.1.7.3 1.2.4 1.6.6.7.2 1.3.2 1.8.1.5-.1 1.4-.6 1.6-1.1.2-.5.2-1 .1-1.1-.1-.1-.2-.2-.5-.3Z"/></svg>
-      WhatsApp
-    </button>
-    <button class="action-btn sms" id="btnText">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      Text
-    </button>
-    <button class="action-btn email" id="btnEmail">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 6-10 7L2 6"/></svg>
-      Email
     </button>
   </div>
 </header>
@@ -993,222 +966,271 @@ document.getElementById("shiftToggle").querySelectorAll("button").forEach(btn=>{
   };
 });
 
-function buildReportText(){
-  const s = computeStats(); // respects whatever position/shift filter is active on screen
-  const rec = attendance[selectedDay] || {};
-  let present=0, late=0, noshow=0;
-  s.scheduled.forEach(e=>{
-    const st = rec[e.name] && rec[e.name].status;
-    if(st==="present") present++; else if(st==="late") late++; else if(st==="noshow") noshow++;
-  });
-  const unmarked = s.scheduled.length - present - late - noshow;
-  const filterNote = filterLabelText()!=="all staff" ? ` (filtered: ${filterLabelText()})` : "";
-
-  const lines = [];
-  lines.push("HORIZON MLS — EHI Daily Schedule");
-  lines.push(`${selectedDay}, ${DAY_DATES[selectedDay]||""}${WEEK_LABEL ? " · "+WEEK_LABEL : ""}${filterNote}`);
-  lines.push("");
-  lines.push(`Scheduled: ${s.scheduled.length}  |  FT/PT: ${s.ft}/${s.pt}  |  AM/PM: ${s.am}/${s.pm}`);
-  lines.push(`Scheduled hours: ${fmtHrs(s.totalHrs)}`);
-  s.depts.forEach(d=> lines.push(`  ${d.pos}: ${fmtHrs(d.hrs)} (${d.list.length} on, ${d.am} AM / ${d.pm} PM)`));
-  lines.push("");
-  lines.push(`Attendance — Present ${present} · Late ${late} · No-show ${noshow} · Unmarked ${unmarked}`);
-
-  const lateList = s.scheduled.filter(e=> rec[e.name] && rec[e.name].status==="late");
-  const noshowList = s.scheduled.filter(e=> rec[e.name] && rec[e.name].status==="noshow");
-  if(lateList.length){
-    lines.push("");
-    lines.push("LATE:");
-    lateList.forEach(e=>{
-      const a = rec[e.name].actualIn;
-      lines.push(`  - ${e.name} (${e.position}) — sched ${fmt12(dayRecord(e,selectedDay).in)}${a ? ", actual "+fmt12(a) : ""}`);
-    });
-  }
-  if(noshowList.length){
-    lines.push("");
-    lines.push("NO-SHOW:");
-    noshowList.forEach(e=> lines.push(`  - ${e.name} (${e.position}) — sched ${fmt12(dayRecord(e,selectedDay).in)}`));
-  }
-
-  lines.push("");
-  lines.push("Roster:");
-  s.depts.forEach(d=>{
-    lines.push(`${d.pos} (${d.list.length}):`);
-    d.list.slice().sort((a,b)=>toMinutes(dayRecord(a,selectedDay).in)-toMinutes(dayRecord(b,selectedDay).in)).forEach(e=>{
-      const day = dayRecord(e, selectedDay);
-      const st = (rec[e.name] && rec[e.name].status) || "unmarked";
-      const stLabel = st==="present"?"Present":st==="late"?"Late":st==="noshow"?"No-show":"Not set";
-      lines.push(`  ${fmt12(day.in)}–${fmt12(day.out)}  ${e.name} (${e.type})  [${stLabel}]`);
-    });
-  });
-  // Off-today staff are intentionally excluded from every export/share format.
-
-  return lines.join("\n");
+// ---------- Hand-drawn PDF export ----------
+// Draws the report directly with jsPDF's own text/shape primitives (not a
+// screenshot), so there is no dependency on how any particular browser or
+// web font rasterizes text — this can't produce squished/overlapping text
+// the way a canvas-snapshot approach can.
+function deptColorPdf(pos){
+  if(pos === "Lead")   return [247,151,19];
+  if(pos === "VSA")    return [22,59,123];
+  if(pos === "Driver") return [14,128,116];
+  if(pos === "CS")     return [92,122,158];
+  if(pos === "QC")     return [178,58,107];
+  return [107,114,128];
+}
+function deptSoftPdf(pos){
+  if(pos === "Lead")   return [253,236,211];
+  if(pos === "VSA")    return [228,234,246];
+  if(pos === "Driver") return [220,243,240];
+  if(pos === "CS")     return [229,236,243];
+  if(pos === "QC")     return [247,227,236];
+  return [238,240,242];
+}
+function statusColorPdf(st){
+  if(st==="present") return { bg:[230,244,234], fg:[33,122,61] };
+  if(st==="late")    return { bg:[253,240,216], fg:[148,111,0] };
+  if(st==="noshow")  return { bg:[251,228,225], fg:[178,58,42] };
+  return { bg:[238,240,242], fg:[91,100,114] };
+}
+function statusLabelPdf(st){
+  return st==="present"?"Present":st==="late"?"Late":st==="noshow"?"No-show":"Not set";
 }
 
-function goExternal(url, newTab){
-  if(newTab){ window.open(url, "_blank", "noopener"); }
-  else { window.location.href = url; }
-}
-
-function generateReportPdf(){
+function buildPdf(){
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: "pt", format: "letter" });
-  const marginX = 40;
-  const pageHeight = doc.internal.pageSize.getHeight();
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const lineHeight = 14;
-  let y = 40;
+  const doc = new jsPDF({ unit:"pt", format:"letter" });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const marginX = 32;
+  const contentW = pageW - marginX*2;
+  const bottomLimit = pageH - 32;
+  let y = 32;
 
-  function ensureSpace(extra){
-    if(y + extra > pageHeight - 40){ doc.addPage(); y = 40; }
+  function newPageIfNeeded(neededHeight){
+    if(y + neededHeight > bottomLimit){
+      doc.addPage();
+      y = 32;
+      return true;
+    }
+    return false;
   }
-  function addLine(text, opts={}){
-    const size = opts.size || 10;
-    const style = opts.style || "normal";
-    const color = opts.color || [22,35,63];
-    doc.setFont("helvetica", style);
-    doc.setFontSize(size);
-    doc.setTextColor(color[0], color[1], color[2]);
-    ensureSpace(lineHeight);
-    doc.text(text, marginX, y);
-    y += lineHeight;
+  function fillRoundRect(x,yy,w,h,r,fill){
+    doc.setFillColor(fill[0],fill[1],fill[2]);
+    doc.roundedRect(x,yy,w,h,r,r,"F");
   }
-  function addWrapped(text, opts={}){
-    const size = opts.size || 9.5;
-    doc.setFont("helvetica", opts.style || "normal");
-    doc.setFontSize(size);
-    const wrapped = doc.splitTextToSize(text, pageWidth - marginX*2);
-    wrapped.forEach(line=> addLine(line, opts));
+  function fillStrokeRoundRect(x,yy,w,h,r,fill,stroke){
+    doc.setFillColor(fill[0],fill[1],fill[2]);
+    doc.setDrawColor(stroke[0],stroke[1],stroke[2]);
+    doc.roundedRect(x,yy,w,h,r,r,"FD");
   }
-
-  try{ doc.addImage(LOGO_DATA_URI, "PNG", marginX, y, 92, 50); }catch(e){}
-  y += 62;
+  function truncateToWidth(text, maxWidth){
+    if(doc.getTextWidth(text) <= maxWidth) return text;
+    let t = text;
+    while(t.length > 1 && doc.getTextWidth(t+"…") > maxWidth){ t = t.slice(0,-1); }
+    return t+"…";
+  }
 
   const s = computeStats();
-  const filterNote = filterLabelText()!=="all staff" ? `Filtered: ${filterLabelText()}` : "";
-
-  addLine("EHI Daily Schedule", {size:16, style:"bold", color:[22,59,123]});
-  addLine(`${selectedDay}, ${DAY_DATES[selectedDay]||""}${WEEK_LABEL ? " · "+WEEK_LABEL : ""}`, {size:10, color:[91,100,114]});
-  if(filterNote){ addLine(filterNote, {size:9, color:[201,118,0]}); }
-  y += 6;
-
-  addLine(`Scheduled: ${s.scheduled.length}   FT/PT: ${s.ft}/${s.pt}   AM/PM: ${s.am}/${s.pm}`, {size:10});
-  addLine(`Scheduled hours: ${fmtHrs(s.totalHrs)}`, {size:12, style:"bold"});
-  y += 4;
-  s.depts.forEach(d=>{
-    addLine(`${d.pos}: ${fmtHrs(d.hrs)}  (${d.list.length} on · ${d.am} AM / ${d.pm} PM)`, {size:10});
-  });
-
-  y += 10;
   const rec = attendance[selectedDay] || {};
+  const filterNote = filterLabelText()!=="all staff" ? `  ·  Filtered: ${filterLabelText()}` : "";
+
+  // ---------- Header ----------
+  try{ doc.addImage(LOGO_DATA_URI, "PNG", marginX, y, 46, 25); }catch(e){}
+  const hx = marginX + 56;
+  doc.setFont("helvetica","bold"); doc.setFontSize(12.5); doc.setTextColor(22,35,63);
+  doc.text("EHI Daily Schedule", hx, y+10);
+  const titleW = doc.getTextWidth("EHI Daily Schedule");
+  fillRoundRect(hx+titleW+8, y+1, 26, 11, 3, [247,151,19]);
+  doc.setFont("helvetica","bold"); doc.setFontSize(7); doc.setTextColor(255,255,255);
+  doc.text("MCO", hx+titleW+8+13, y+9, {align:"center"});
+
+  doc.setFont("helvetica","bold"); doc.setFontSize(7); doc.setTextColor(22,59,123);
+  doc.text("FOCUSED. ACCOUNTABLE. DRIVEN TO", hx, y+20);
+  const focusedW = doc.getTextWidth("FOCUSED. ACCOUNTABLE. DRIVEN TO ");
+  doc.setTextColor(247,151,19);
+  doc.text("EXCEL.", hx+focusedW, y+20);
+
+  doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(91,100,114);
+  doc.text(`${selectedDay}, ${DAY_DATES[selectedDay]||""} · ${WEEK_LABEL}${filterNote}`, hx, y+31);
+
+  y += 40;
+  doc.setDrawColor(226,230,239);
+  doc.line(marginX, y, pageW-marginX, y);
+  y += 13;
+
+  // ---------- Stats grid (2x2) ----------
+  const gap = 8;
+  const boxW = (contentW-gap)/2;
+  const boxH = 42;
+
+  function statLabelValue(x, yy, label, value){
+    fillStrokeRoundRect(x, yy, boxW, boxH, 7, [255,255,255], [226,230,239]);
+    doc.setFont("helvetica","bold"); doc.setFontSize(6.5); doc.setTextColor(91,100,114);
+    doc.text(label.toUpperCase(), x+10, yy+12);
+    doc.setFont("helvetica","bold"); doc.setFontSize(13.5); doc.setTextColor(22,35,63);
+    doc.text(value, x+10, yy+27);
+  }
+  function splitBar(x, yy, leftVal, rightVal, leftColor, rightColor){
+    const barW = boxW-20, barH=4, barY=yy+33;
+    const total = leftVal+rightVal || 1;
+    const leftW = barW*(leftVal/total);
+    doc.setFillColor(226,230,239); doc.rect(x+10, barY, barW, barH, "F");
+    doc.setFillColor(leftColor[0],leftColor[1],leftColor[2]); doc.rect(x+10, barY, leftW, barH, "F");
+    doc.setFillColor(rightColor[0],rightColor[1],rightColor[2]); doc.rect(x+10+leftW, barY, barW-leftW, barH, "F");
+  }
+
+  newPageIfNeeded(boxH*2+gap);
+  statLabelValue(marginX, y, "Scheduled", String(s.scheduled.length));
+  statLabelValue(marginX+boxW+gap, y, "FT / PT", `${s.ft} / ${s.pt}`);
+  splitBar(marginX+boxW+gap, y, s.ft, s.pt, [22,59,123], [247,151,19]);
+  y += boxH+gap;
+
+  statLabelValue(marginX, y, "AM / PM", `${s.am} / ${s.pm}`);
+  splitBar(marginX, y, s.am, s.pm, [47,160,168], [123,79,166]);
+  fillRoundRect(marginX+boxW+gap, y, boxW, boxH, 7, [253,236,211]);
+  doc.setFont("helvetica","bold"); doc.setFontSize(6.5); doc.setTextColor(91,100,114);
+  doc.text("SCHED. HOURS", marginX+boxW+gap+10, y+12);
+  doc.setFont("helvetica","bold"); doc.setFontSize(13.5); doc.setTextColor(22,35,63);
+  doc.text(fmtHrs(s.totalHrs), marginX+boxW+gap+10, y+27);
+  doc.setFont("helvetica","normal"); doc.setFontSize(6.5); doc.setTextColor(91,100,114);
+  doc.text(`today, ${filterLabelText()}`, marginX+boxW+gap+10, y+37);
+  y += boxH+13;
+
+  // ---------- Department boxes (wraps 3 per row) ----------
+  const deptGap = 8;
+  const deptBoxW = (contentW - deptGap*2)/3;
+  const deptBoxH = 40;
+  newPageIfNeeded(deptBoxH);
+  s.depts.forEach((d,i)=>{
+    const col = i % 3;
+    if(col === 0 && i !== 0){ y += deptBoxH+deptGap; newPageIfNeeded(deptBoxH); }
+    const x = marginX + col*(deptBoxW+deptGap);
+    const c = deptColorPdf(d.pos);
+    doc.setFillColor(c[0],c[1],c[2]); doc.roundedRect(x, y, 2.5, deptBoxH, 1.2,1.2,"F");
+    fillStrokeRoundRect(x+4, y, deptBoxW-4, deptBoxH, 6, [255,255,255], [226,230,239]);
+    doc.setFont("helvetica","bold"); doc.setFontSize(7); doc.setTextColor(c[0],c[1],c[2]);
+    doc.text(d.pos.toUpperCase(), x+12, y+11);
+    doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(22,35,63);
+    doc.text(fmtHrs(d.hrs), x+12, y+23);
+    const hw = doc.getTextWidth(fmtHrs(d.hrs));
+    doc.setFont("helvetica","normal"); doc.setFontSize(6.5); doc.setTextColor(91,100,114);
+    doc.text(`${d.list.length} on`, x+12+hw+4, y+23);
+    doc.setFont("helvetica","bold"); doc.setFontSize(6.5);
+    doc.setTextColor(47,160,168); doc.text(`${d.am} AM`, x+12, y+33);
+    const amW = doc.getTextWidth(`${d.am} AM`);
+    doc.setTextColor(160,166,178); doc.text(" · ", x+12+amW, y+33);
+    doc.setTextColor(123,79,166); doc.text(`${d.pm} PM`, x+12+amW+7, y+33);
+  });
+  y += deptBoxH+15;
+
+  // ---------- Attendance tally ----------
   let present=0, late=0, noshow=0;
   s.scheduled.forEach(e=>{
     const st = rec[e.name] && rec[e.name].status;
     if(st==="present") present++; else if(st==="late") late++; else if(st==="noshow") noshow++;
   });
-  const unmarked = s.scheduled.length - present - late - noshow;
-  addLine(`Attendance — Present ${present} · Late ${late} · No-show ${noshow} · Unmarked ${unmarked}`, {size:10, style:"bold"});
+  const unmarked = s.scheduled.length-present-late-noshow;
+  newPageIfNeeded(16);
+  const tally = [
+    { label:`Present ${present}`, color:[58,166,85] },
+    { label:`Late ${late}`, color:[241,194,50] },
+    { label:`No-show ${noshow}`, color:[204,65,37] },
+    { label:`Unmarked ${unmarked}`, color:[180,186,178] }
+  ];
+  let tx = marginX;
+  doc.setFont("helvetica","bold"); doc.setFontSize(7.5);
+  tally.forEach(t=>{
+    doc.setFillColor(t.color[0],t.color[1],t.color[2]);
+    doc.circle(tx+3, y-2.5, 2.5, "F");
+    doc.setTextColor(30,35,50);
+    doc.text(t.label, tx+9, y);
+    tx += 9 + doc.getTextWidth(t.label) + 12;
+  });
+  y += 16;
 
-  const lateList = s.scheduled.filter(e=> rec[e.name] && rec[e.name].status==="late");
-  const noshowList = s.scheduled.filter(e=> rec[e.name] && rec[e.name].status==="noshow");
-  if(lateList.length){
-    y += 6;
-    addLine("LATE", {size:10, style:"bold", color:[201,118,0]});
-    lateList.forEach(e=>{
-      const a = rec[e.name].actualIn;
-      addWrapped(`${e.name} (${e.position}) — sched ${fmt12(dayRecord(e,selectedDay).in)}${a ? ", actual "+fmt12(a) : ""}`);
-    });
-  }
-  if(noshowList.length){
-    y += 6;
-    addLine("NO-SHOW", {size:10, style:"bold", color:[178,58,42]});
-    noshowList.forEach(e=>{
-      addWrapped(`${e.name} (${e.position}) — sched ${fmt12(dayRecord(e,selectedDay).in)}`);
-    });
-  }
+  // ---------- Roster ----------
+  doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.setTextColor(22,59,123);
+  newPageIfNeeded(14);
+  doc.text("Roster", marginX, y);
+  y += 13;
 
-  y += 10;
-  addLine("Roster", {size:12, style:"bold", color:[22,59,123]});
+  const rowH = 26;
   s.depts.forEach(d=>{
-    y += 4;
-    addLine(`${d.pos} (${d.list.length})`, {size:10.5, style:"bold"});
-    d.list.slice().sort((a,b)=>toMinutes(dayRecord(a,selectedDay).in)-toMinutes(dayRecord(b,selectedDay).in)).forEach(e=>{
+    const c = deptColorPdf(d.pos);
+    newPageIfNeeded(14);
+    doc.setFillColor(c[0],c[1],c[2]); doc.circle(marginX+3, y-2.5, 2.6, "F");
+    doc.setFont("helvetica","bold"); doc.setFontSize(8); doc.setTextColor(c[0],c[1],c[2]);
+    doc.text(`${d.pos.toUpperCase()} (${d.list.length})`, marginX+10, y);
+    y += 10;
+
+    const sorted = d.list.slice().sort((a,b)=>toMinutes(dayRecord(a,selectedDay).in)-toMinutes(dayRecord(b,selectedDay).in));
+    sorted.forEach(e=>{
+      newPageIfNeeded(rowH+3);
       const day = dayRecord(e, selectedDay);
       const st = (rec[e.name] && rec[e.name].status) || "unmarked";
-      const stLabel = st==="present"?"Present":st==="late"?"Late":st==="noshow"?"No-show":"Not set";
-      addWrapped(`${fmt12(day.in)}–${fmt12(day.out)}  ${e.name} (${e.type})  [${stLabel}]`);
+      const rowY = y;
+
+      fillStrokeRoundRect(marginX, rowY, contentW, rowH, 6, [255,255,255], [226,230,239]);
+
+      const cx = marginX+16, cy = rowY+rowH/2;
+      doc.setFillColor(c[0],c[1],c[2]); doc.circle(cx, cy, 9, "F");
+      const initials = e.name.trim().split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase();
+      doc.setFont("helvetica","bold"); doc.setFontSize(6.8); doc.setTextColor(255,255,255);
+      doc.text(initials, cx, cy+2.4, {align:"center"});
+
+      const textX = marginX+31;
+      const rightLimit = marginX + contentW - 58;
+      doc.setFont("helvetica","bold"); doc.setFontSize(8.5); doc.setTextColor(22,35,63);
+      const nameShown = truncateToWidth(e.name, rightLimit-textX-56);
+      doc.text(nameShown, textX, rowY+10);
+
+      let bx = textX + doc.getTextWidth(nameShown) + 5;
+      const typeW = doc.getTextWidth(e.type)+8;
+      if(bx+typeW < rightLimit){
+        fillRoundRect(bx, rowY+3.5, typeW, 9, 2.5, [236,238,241]);
+        doc.setFont("helvetica","bold"); doc.setFontSize(6.2); doc.setTextColor(85,96,107);
+        doc.text(e.type, bx+typeW/2, rowY+10, {align:"center"});
+        bx += typeW+4;
+      }
+      const posW = doc.getTextWidth(d.pos)+8;
+      if(bx+posW < rightLimit){
+        const soft = deptSoftPdf(d.pos);
+        fillRoundRect(bx, rowY+3.5, posW, 9, 2.5, soft);
+        doc.setFont("helvetica","bold"); doc.setFontSize(6.2); doc.setTextColor(c[0],c[1],c[2]);
+        doc.text(d.pos, bx+posW/2, rowY+10, {align:"center"});
+      }
+
+      const timeText = `${fmt12(day.in)} - ${fmt12(day.out)}`;
+      doc.setFont("helvetica","normal"); doc.setFontSize(7.2); doc.setTextColor(91,100,114);
+      doc.text(timeText, textX, rowY+20);
+      const hrs = durationHrs(day.in, day.out);
+      const hrsLabel = fmtHrs(hrs);
+      const hrsChipX = textX + doc.getTextWidth(timeText) + 5;
+      const hrsChipW = doc.getTextWidth(hrsLabel)+8;
+      if(hrsChipX+hrsChipW < rightLimit){
+        const soft = deptSoftPdf(d.pos);
+        fillRoundRect(hrsChipX, rowY+14.5, hrsChipW, 9, 2.5, soft);
+        doc.setFont("helvetica","bold"); doc.setFontSize(6.2); doc.setTextColor(c[0],c[1],c[2]);
+        doc.text(hrsLabel, hrsChipX+hrsChipW/2, rowY+21, {align:"center"});
+      }
+
+      const sc = statusColorPdf(st);
+      const stLabel = statusLabelPdf(st);
+      const stW = doc.getTextWidth(stLabel)+13;
+      const stX = marginX+contentW-stW-6;
+      fillRoundRect(stX, rowY+rowH/2-6.5, stW, 13, 4, sc.bg);
+      doc.setFont("helvetica","bold"); doc.setFontSize(7); doc.setTextColor(sc.fg[0],sc.fg[1],sc.fg[2]);
+      doc.text(stLabel, stX+stW/2, rowY+rowH/2+2.5, {align:"center"});
+
+      y += rowH+5;
     });
+    y += 5;
   });
-  // Off-today staff are intentionally excluded from every export/share format.
 
   return doc;
 }
 
-async function buildVisualPdf(){
-  document.body.classList.add("exporting");
-  // Let the layout reflow after hiding the day-rail/action-bar/filters before we snapshot it.
-  await new Promise(r=>setTimeout(r, 60));
-
-  const CAPTURE_SCALE = 2;
-  // Collect "don't slice through this" regions (cards, dept boxes, stat boxes) in
-  // canvas-pixel space, BEFORE capturing, so page breaks can be nudged to land in
-  // the gaps between them instead of cutting one in half.
-  const avoidRects = Array.from(document.querySelectorAll(".card, .dept-card, .stat-card")).map(el=>{
-    const r = el.getBoundingClientRect();
-    return {
-      top: (r.top + window.scrollY) * CAPTURE_SCALE,
-      bottom: (r.bottom + window.scrollY) * CAPTURE_SCALE
-    };
-  });
-
-  let canvas;
-  try{
-    canvas = await html2canvas(document.body, { scale: CAPTURE_SCALE, backgroundColor: "#ffffff", useCORS: true });
-  } finally {
-    document.body.classList.remove("exporting");
-  }
-
-  const pdf = new window.jspdf.jsPDF({ unit: "pt", format: "letter" });
-  const pageW = pdf.internal.pageSize.getWidth();
-  const pageH = pdf.internal.pageSize.getHeight();
-  const ratio = pageW / canvas.width;      // canvas px -> PDF pt, at full page width
-  const idealPagePx = pageH / ratio;       // ideal slice height in canvas px, before nudging
-
-  function nudgeBoundary(y){
-    // If this cut point falls inside a card/box, move the cut up to just above
-    // that element instead — it starts fresh on the next page instead of splitting.
-    for(const r of avoidRects){
-      if(y > r.top + 4 && y < r.bottom - 4){
-        return Math.max(r.top, 1);
-      }
-    }
-    return y;
-  }
-
-  let y = 0;
-  let first = true;
-  let guard = 0;
-  while(y < canvas.height && guard < 200){
-    guard++;
-    let sliceEnd = Math.min(y + idealPagePx, canvas.height);
-    if(sliceEnd < canvas.height){
-      const nudged = nudgeBoundary(sliceEnd);
-      sliceEnd = (nudged > y) ? nudged : sliceEnd; // safety: never go backwards or produce a zero-height slice
-    }
-    const sliceH = Math.max(1, Math.round(sliceEnd - y));
-    const slice = document.createElement("canvas");
-    slice.width = canvas.width;
-    slice.height = sliceH;
-    slice.getContext("2d").drawImage(canvas, 0, y, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
-    const imgData = slice.toDataURL("image/png");
-    if(!first) pdf.addPage();
-    first = false;
-    pdf.addImage(imgData, "PNG", 0, 0, pageW, sliceH*ratio);
-    y += sliceH;
-  }
-  return pdf;
-}
 
 let pendingPdfFile = null; // the most recently generated PDF, held while the share/download modal is open
 
@@ -1230,16 +1252,7 @@ async function shareOrDownloadPdf(){
   const originalLabel = btn.innerHTML;
   btn.innerHTML = "Preparing…";
   try{
-    let doc;
-    if(window.html2canvas){
-      try{
-        doc = await buildVisualPdf(); // matches the on-screen look (colors, cards, badges)
-      }catch(captureErr){
-        doc = generateReportPdf(); // plain-text fallback if the snapshot fails for any reason
-      }
-    } else {
-      doc = generateReportPdf();
-    }
+    const doc = buildPdf();
     const blob = doc.output("blob");
     const fileName = `EHI-Schedule-${selectedDay}-${(DAY_DATES[selectedDay]||"").replace(/\s+/g,"")}.pdf`;
     pendingPdfFile = new File([blob], fileName, { type: "application/pdf" });
@@ -1281,18 +1294,6 @@ document.getElementById("pdfDownloadBtn").onclick = ()=>{
 document.getElementById("pdfCancelBtn").onclick = closePdfModal;
 document.getElementById("pdfModalBackdrop").onclick = (e)=>{
   if(e.target.id === "pdfModalBackdrop") closePdfModal();
-};
-document.getElementById("btnWhatsApp").onclick = ()=>{
-  goExternal(`https://wa.me/?text=${encodeURIComponent(buildReportText())}`, true);
-};
-document.getElementById("btnText").onclick = ()=>{
-  const text = buildReportText();
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  goExternal(isIOS ? `sms:&body=${encodeURIComponent(text)}` : `sms:?body=${encodeURIComponent(text)}`, false);
-};
-document.getElementById("btnEmail").onclick = ()=>{
-  const subject = `EHI Daily Schedule — ${selectedDay}, ${DAY_DATES[selectedDay]||""}`;
-  goExternal(`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(buildReportText())}`, false);
 };
 
 async function render(dayChanged){
