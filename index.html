@@ -325,6 +325,29 @@
     background: var(--orange-soft); border:1px solid #F5D8AE; font-size:12px; color: var(--navy-deep);
   }
   .roadmap b{ display:block; font-size:12.5px; margin-bottom:2px; }
+
+  /* ---------- Share/Download choice modal ---------- */
+  .pdf-modal-backdrop{
+    display:none; position:fixed; inset:0; background:rgba(15,23,42,0.45);
+    z-index:100; align-items:flex-end; justify-content:center;
+  }
+  .pdf-modal-backdrop.show{ display:flex; }
+  .pdf-modal{
+    background:var(--paper); width:100%; max-width:480px; border-radius:18px 18px 0 0;
+    padding: 20px 18px calc(18px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -6px 24px rgba(0,0,0,0.18);
+  }
+  .pdf-modal-title{ font-family:'Space Grotesk'; font-weight:700; font-size:16px; }
+  .pdf-modal-sub{ font-size:12.5px; color:var(--ink-soft); margin-top:3px; margin-bottom:14px; }
+  .pdf-modal-btn{
+    width:100%; display:flex; align-items:center; justify-content:center; gap:8px;
+    border:1px solid var(--line); background:var(--paper); border-radius:12px;
+    padding:12px; font-size:14px; font-weight:700; font-family:inherit; color:var(--navy);
+    margin-bottom:8px; cursor:pointer; min-height:var(--tap);
+  }
+  .pdf-modal-btn.primary{ background:var(--navy); color:#fff; border-color:var(--navy); }
+  .pdf-modal-btn.cancel{ color:var(--ink-soft); border:none; margin-bottom:0; }
+
   /* ---------- Print / PDF export ---------- */
   @media print{
     @page{ margin: 12mm; }
@@ -449,6 +472,22 @@
 <div class="roadmap">
   <b>Coming later</b>
   This view reads the schedule only — attendance marks stay in this session and never change the roster. Adding or editing employees from here is planned for a future version.
+</div>
+
+<div class="pdf-modal-backdrop" id="pdfModalBackdrop">
+  <div class="pdf-modal">
+    <div class="pdf-modal-title">PDF ready</div>
+    <div class="pdf-modal-sub">Share it straight to an app, or save the file to your device.</div>
+    <button class="pdf-modal-btn primary" id="pdfShareBtn">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><path d="M16 6l-4-4-4 4"/><path d="M12 2v14"/></svg>
+      Share
+    </button>
+    <button class="pdf-modal-btn" id="pdfDownloadBtn">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+      Download
+    </button>
+    <button class="pdf-modal-btn cancel" id="pdfCancelBtn">Cancel</button>
+  </div>
 </div>
 
 <script>
@@ -1002,14 +1041,7 @@ function buildReportText(){
       lines.push(`  ${fmt12(day.in)}–${fmt12(day.out)}  ${e.name} (${e.type})  [${stLabel}]`);
     });
   });
-
-  if(filterLabelText()==="all staff"){
-    const offToday = EMPLOYEES.filter(e=>isOff(dayRecord(e,selectedDay).in));
-    if(offToday.length){
-      lines.push("");
-      lines.push(`Off today (${offToday.length}): ` + offToday.map(e=>e.name).join(", "));
-    }
-  }
+  // Off-today staff are intentionally excluded from every export/share format.
 
   return lines.join("\n");
 }
@@ -1108,15 +1140,7 @@ function generateReportPdf(){
       addWrapped(`${fmt12(day.in)}–${fmt12(day.out)}  ${e.name} (${e.type})  [${stLabel}]`);
     });
   });
-
-  if(filterLabelText()==="all staff"){
-    const offToday = EMPLOYEES.filter(e=>isOff(dayRecord(e,selectedDay).in));
-    if(offToday.length){
-      y += 10;
-      addLine(`Off today (${offToday.length})`, {size:10.5, style:"bold", color:[91,100,114]});
-      addWrapped(offToday.map(e=>e.name).join(", "));
-    }
-  }
+  // Off-today staff are intentionally excluded from every export/share format.
 
   return doc;
 }
@@ -1125,9 +1149,22 @@ async function buildVisualPdf(){
   document.body.classList.add("exporting");
   // Let the layout reflow after hiding the day-rail/action-bar/filters before we snapshot it.
   await new Promise(r=>setTimeout(r, 60));
+
+  const CAPTURE_SCALE = 2;
+  // Collect "don't slice through this" regions (cards, dept boxes, stat boxes) in
+  // canvas-pixel space, BEFORE capturing, so page breaks can be nudged to land in
+  // the gaps between them instead of cutting one in half.
+  const avoidRects = Array.from(document.querySelectorAll(".card, .dept-card, .stat-card")).map(el=>{
+    const r = el.getBoundingClientRect();
+    return {
+      top: (r.top + window.scrollY) * CAPTURE_SCALE,
+      bottom: (r.bottom + window.scrollY) * CAPTURE_SCALE
+    };
+  });
+
   let canvas;
   try{
-    canvas = await html2canvas(document.body, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+    canvas = await html2canvas(document.body, { scale: CAPTURE_SCALE, backgroundColor: "#ffffff", useCORS: true });
   } finally {
     document.body.classList.remove("exporting");
   }
@@ -1135,13 +1172,31 @@ async function buildVisualPdf(){
   const pdf = new window.jspdf.jsPDF({ unit: "pt", format: "letter" });
   const pageW = pdf.internal.pageSize.getWidth();
   const pageH = pdf.internal.pageSize.getHeight();
-  const ratio = pageW / canvas.width;          // canvas px -> PDF pt, at full page width
-  const pagePxHeight = Math.floor(pageH / ratio); // how many canvas px rows fit on one PDF page
+  const ratio = pageW / canvas.width;      // canvas px -> PDF pt, at full page width
+  const idealPagePx = pageH / ratio;       // ideal slice height in canvas px, before nudging
+
+  function nudgeBoundary(y){
+    // If this cut point falls inside a card/box, move the cut up to just above
+    // that element instead — it starts fresh on the next page instead of splitting.
+    for(const r of avoidRects){
+      if(y > r.top + 4 && y < r.bottom - 4){
+        return Math.max(r.top, 1);
+      }
+    }
+    return y;
+  }
 
   let y = 0;
   let first = true;
-  while(y < canvas.height){
-    const sliceH = Math.min(pagePxHeight, canvas.height - y);
+  let guard = 0;
+  while(y < canvas.height && guard < 200){
+    guard++;
+    let sliceEnd = Math.min(y + idealPagePx, canvas.height);
+    if(sliceEnd < canvas.height){
+      const nudged = nudgeBoundary(sliceEnd);
+      sliceEnd = (nudged > y) ? nudged : sliceEnd; // safety: never go backwards or produce a zero-height slice
+    }
+    const sliceH = Math.max(1, Math.round(sliceEnd - y));
     const slice = document.createElement("canvas");
     slice.width = canvas.width;
     slice.height = sliceH;
@@ -1153,6 +1208,21 @@ async function buildVisualPdf(){
     y += sliceH;
   }
   return pdf;
+}
+
+let pendingPdfFile = null; // the most recently generated PDF, held while the share/download modal is open
+
+function downloadFile(file){
+  const url = URL.createObjectURL(file);
+  const a = document.createElement("a");
+  a.href = url; a.download = file.name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+}
+
+function closePdfModal(){
+  document.getElementById("pdfModalBackdrop").classList.remove("show");
+  pendingPdfFile = null;
 }
 
 async function shareOrDownloadPdf(){
@@ -1172,27 +1242,11 @@ async function shareOrDownloadPdf(){
     }
     const blob = doc.output("blob");
     const fileName = `EHI-Schedule-${selectedDay}-${(DAY_DATES[selectedDay]||"").replace(/\s+/g,"")}.pdf`;
-    const file = new File([blob], fileName, { type: "application/pdf" });
+    pendingPdfFile = new File([blob], fileName, { type: "application/pdf" });
 
-    if(navigator.canShare && navigator.canShare({ files:[file] })){
-      try{
-        await navigator.share({
-          files:[file],
-          title:"EHI Daily Schedule",
-          text:`EHI Daily Schedule — ${selectedDay}, ${DAY_DATES[selectedDay]||""}`
-        });
-        return; // shared successfully via WhatsApp/Mail/Messages/etc — user picked the app
-      }catch(shareErr){
-        if(shareErr && shareErr.name === "AbortError") return; // user cancelled the share sheet, do nothing
-        // fall through to download if share failed for another reason
-      }
-    }
-    // Fallback (desktop browsers, or share unsupported): download the actual PDF file
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = fileName;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    const canShareFile = !!(navigator.canShare && navigator.canShare({ files:[pendingPdfFile] }));
+    document.getElementById("pdfShareBtn").style.display = canShareFile ? "flex" : "none";
+    document.getElementById("pdfModalBackdrop").classList.add("show");
   }catch(e){
     alert("Couldn't generate the PDF: " + e.message);
   }finally{
@@ -1201,6 +1255,33 @@ async function shareOrDownloadPdf(){
 }
 
 document.getElementById("btnExportPdf").onclick = shareOrDownloadPdf;
+
+document.getElementById("pdfShareBtn").onclick = async ()=>{
+  if(!pendingPdfFile) return;
+  try{
+    await navigator.share({
+      files:[pendingPdfFile],
+      title:"EHI Daily Schedule",
+      text:`EHI Daily Schedule — ${selectedDay}, ${DAY_DATES[selectedDay]||""}`
+    });
+  }catch(shareErr){
+    // AbortError = user cancelled the native share sheet — not an error worth surfacing
+    if(shareErr && shareErr.name !== "AbortError"){
+      alert("Sharing didn't go through — you can use Download instead.");
+      return; // leave the modal open so they can try Download
+    }
+  }
+  closePdfModal();
+};
+document.getElementById("pdfDownloadBtn").onclick = ()=>{
+  if(!pendingPdfFile) return;
+  downloadFile(pendingPdfFile);
+  closePdfModal();
+};
+document.getElementById("pdfCancelBtn").onclick = closePdfModal;
+document.getElementById("pdfModalBackdrop").onclick = (e)=>{
+  if(e.target.id === "pdfModalBackdrop") closePdfModal();
+};
 document.getElementById("btnWhatsApp").onclick = ()=>{
   goExternal(`https://wa.me/?text=${encodeURIComponent(buildReportText())}`, true);
 };
