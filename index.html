@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
   :root{
     /* Horizon MLS brand palette, sampled from the logo/scorecard */
@@ -340,6 +341,17 @@
     .stat-grid{ grid-template-columns: repeat(4,1fr); }
     .stat-card, .dept-card{ break-inside: avoid; }
   }
+
+  /* Same hide-list as print, toggled by JS right before the html2canvas
+     capture used for the "Export PDF" share flow (so the PDF matches the
+     visual look of the app, minus the interactive-only chrome). */
+  body.exporting header.top{ position:static; }
+  body.exporting .day-rail, body.exporting .action-bar, body.exporting .filter-row,
+  body.exporting .toggle-row, body.exporting .chev, body.exporting .actions,
+  body.exporting .roadmap, body.exporting .off-toggle, body.exporting .off-list{
+    display:none !important;
+  }
+  body.exporting .card{ break-inside: avoid; }
 </style>
 </head>
 <body>
@@ -1109,12 +1121,55 @@ function generateReportPdf(){
   return doc;
 }
 
+async function buildVisualPdf(){
+  document.body.classList.add("exporting");
+  // Let the layout reflow after hiding the day-rail/action-bar/filters before we snapshot it.
+  await new Promise(r=>setTimeout(r, 60));
+  let canvas;
+  try{
+    canvas = await html2canvas(document.body, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+  } finally {
+    document.body.classList.remove("exporting");
+  }
+
+  const pdf = new window.jspdf.jsPDF({ unit: "pt", format: "letter" });
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const ratio = pageW / canvas.width;          // canvas px -> PDF pt, at full page width
+  const pagePxHeight = Math.floor(pageH / ratio); // how many canvas px rows fit on one PDF page
+
+  let y = 0;
+  let first = true;
+  while(y < canvas.height){
+    const sliceH = Math.min(pagePxHeight, canvas.height - y);
+    const slice = document.createElement("canvas");
+    slice.width = canvas.width;
+    slice.height = sliceH;
+    slice.getContext("2d").drawImage(canvas, 0, y, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+    const imgData = slice.toDataURL("image/png");
+    if(!first) pdf.addPage();
+    first = false;
+    pdf.addImage(imgData, "PNG", 0, 0, pageW, sliceH*ratio);
+    y += sliceH;
+  }
+  return pdf;
+}
+
 async function shareOrDownloadPdf(){
   const btn = document.getElementById("btnExportPdf");
   const originalLabel = btn.innerHTML;
   btn.innerHTML = "Preparing…";
   try{
-    const doc = generateReportPdf();
+    let doc;
+    if(window.html2canvas){
+      try{
+        doc = await buildVisualPdf(); // matches the on-screen look (colors, cards, badges)
+      }catch(captureErr){
+        doc = generateReportPdf(); // plain-text fallback if the snapshot fails for any reason
+      }
+    } else {
+      doc = generateReportPdf();
+    }
     const blob = doc.output("blob");
     const fileName = `EHI-Schedule-${selectedDay}-${(DAY_DATES[selectedDay]||"").replace(/\s+/g,"")}.pdf`;
     const file = new File([blob], fileName, { type: "application/pdf" });
