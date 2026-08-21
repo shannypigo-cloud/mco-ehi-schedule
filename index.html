@@ -181,6 +181,7 @@
   .tally-chip .dot{ width:8px; height:8px; border-radius:50%; }
   .dot.present{ background:#3AA655; }
   .dot.late{ background: var(--orange); }
+  .dot.sick{ background: #7C6FDB; }
   .dot.noshow{ background: var(--mls-red-deep); }
   .dot.unmarked{ background:#C7CCC4; }
   .tally-chip .n{ font-family:'Space Grotesk'; }
@@ -231,6 +232,7 @@
   }
   .card.st-present{ border-left:4px solid #3AA655; }
   .card.st-late{ border-left:4px solid var(--orange); }
+  .card.st-sick{ border-left:4px solid #7C6FDB; background:#F5F3FD; }
   .card.st-noshow{ border-left:4px solid var(--mls-red-deep); background:#FDF5F4; }
   .card-main{
     display:flex; align-items:center; gap:10px; padding: 10px 12px; cursor:pointer; min-height: var(--tap);
@@ -265,6 +267,7 @@
   }
   .status-tag.present{ background:#E6F4EA; color:#217A3D; }
   .status-tag.late{ background:var(--orange-soft); color: var(--orange-deep); }
+  .status-tag.sick{ background:#EDEAFB; color:#5B4EBD; }
   .status-tag.noshow{ background:#FBE4E1; color:#B23A2A; }
   .status-tag.unmarked{ background:var(--mls-gray); color:var(--ink-soft); }
   .chev{ transition: transform .18s ease; color:var(--ink-soft); flex:none; }
@@ -285,6 +288,7 @@
   .action-btns button .ico-dot{ width:9px;height:9px;border-radius:50%; }
   .action-btns button.sel-present{ background:#E6F4EA; border-color:#3AA655; color:#217A3D; }
   .action-btns button.sel-late{ background: var(--orange-soft); border-color: var(--orange); color: var(--orange-deep); }
+  .action-btns button.sel-sick{ background:#EDEAFB; border-color:#7C6FDB; color:#5B4EBD; }
   .action-btns button.sel-noshow{ background:#FBE4E1; border-color:var(--mls-red-deep); color:#B23A2A; }
   .late-input-row{
     display:none; align-items:center; gap:8px; background:var(--paper-sunk); border-radius:10px; padding:8px 10px;
@@ -313,6 +317,16 @@
     width:28px;height:28px;border-radius:50%; background:var(--mls-gray); flex:none;
     display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#8A9086;
   }
+
+  .not-on-site-section{ padding: 0 10px; margin-top: 4px; }
+  .not-on-site-note{
+    font-size:11.5px; color:var(--ink-soft); padding: 0 4px 8px; line-height:1.4;
+  }
+  .reason-group-header{
+    font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.03em;
+    color: var(--orange-deep); padding: 10px 4px 4px;
+  }
+  .reason-group-header .n{ color:var(--ink-soft); font-weight:600; text-transform:none; letter-spacing:0; }
 
   .empty{ text-align:center; padding: 30px 20px; color:var(--ink-soft); font-size:13.5px; }
 
@@ -436,6 +450,12 @@
 <div class="list" id="onList"></div>
 <div id="emptyState" class="empty" style="display:none;">No one matches that search.</div>
 
+<div class="not-on-site-section" id="notOnSiteSection" style="display:none;">
+  <div class="section-label" style="padding-top:6px;" id="notOnSiteLabel">Not on site today</div>
+  <div class="not-on-site-note">Scheduled but not working today (sick, vacation, on call, etc.) — excluded from the headcount and hours above.</div>
+  <div class="list" id="notOnSiteList"></div>
+</div>
+
 <div class="off-toggle" id="offToggle">
   <span id="offToggleLabel">Off today (–)</span>
   <span id="offChevron">▾</span>
@@ -493,6 +513,34 @@ function isOff(v){
   if(!v) return true;
   return v.toString().trim().toLowerCase() === "off";
 }
+// Distinguishes a real scheduled time from special schedule-cell text
+// (sick, vac, on call, no show, home city, etc.) typed directly into the
+// sheet in place of an actual time. Those people are not "off" (they're not
+// simply unscheduled) but they're also not physically working today, so they
+// shouldn't count toward the on-site headcount either — they get their own
+// "Not on site" bucket instead.
+const SPECIAL_LABEL_CANON = {
+  "sick": "Sick", "vac": "Vacation", "vacation": "Vacation",
+  "no show": "No-show (scheduled)", "on call": "On call", "home city": "Home city"
+};
+function scheduleKind(v){
+  if(isOff(v)) return "off";
+  const s = (v||"").toString().trim();
+  const parts = s.split(":");
+  if(parts.length===2){
+    const h = Number(parts[0]), m = Number(parts[1]);
+    if(Number.isFinite(h) && Number.isFinite(m)) return "time";
+  }
+  return "special";
+}
+function specialLabel(v){
+  const s = (v||"").toString().trim().toLowerCase();
+  return SPECIAL_LABEL_CANON[s] || (s.charAt(0).toUpperCase()+s.slice(1));
+}
+function isWorking(dayRec){ return scheduleKind(dayRec.in) === "time"; }
+function isSpecial(dayRec){ return scheduleKind(dayRec.in) === "special"; }
+function isDayOff(dayRec){ return scheduleKind(dayRec.in) === "off"; }
+
 function toMinutes(t){
   if(!t || isOff(t)) return null;
   const parts = t.split(":");
@@ -547,7 +595,9 @@ function durationHrs(inT,outT){
   if(a===null||b===null) return 0;
   let diff = b-a;
   if(diff<0) diff += 24*60;
-  return diff/60;
+  const rawHours = diff/60;
+  // Scheduled shifts of 6+ hours include an unpaid 30-min lunch; under 6 hours, none.
+  return rawHours <= 6 ? rawHours : rawHours - 0.5;
 }
 
 function localISODate(d){
@@ -672,7 +722,7 @@ function buildDayRail(){
   const rail = document.getElementById("dayRail");
   rail.innerHTML = "";
   DAYS.forEach(day=>{
-    const scheduledCount = EMPLOYEES.filter(e=>!isOff(dayRecord(e,day).in)).length;
+    const scheduledCount = EMPLOYEES.filter(e=>isWorking(dayRecord(e,day))).length;
     const pill = document.createElement("div");
     pill.className = "day-pill" + (day===selectedDay?" active":"") + (day===TODAY_NAME?" today":"");
     pill.innerHTML = `<div class="d-name">${day.slice(0,3)}</div><div class="d-count">${scheduledCount} on</div>`;
@@ -697,7 +747,7 @@ function filterLabelText(){
 }
 
 function computeStats(){
-  const scheduled = EMPLOYEES.filter(e=>!isOff(dayRecord(e,selectedDay).in) && passesStatFilters(e));
+  const scheduled = EMPLOYEES.filter(e=>isWorking(dayRecord(e,selectedDay)) && passesStatFilters(e));
   const ft = scheduled.filter(e=>e.type==="FT").length;
   const pt = scheduled.filter(e=>e.type==="PT").length;
   const am = scheduled.filter(e=>{
@@ -757,19 +807,21 @@ function renderStats(){
 
 function renderTally(){
   const rec = attendance[selectedDay] || {};
-  const scheduled = EMPLOYEES.filter(e=>!isOff(dayRecord(e,selectedDay).in));
-  let present=0, late=0, noshow=0;
+  const scheduled = EMPLOYEES.filter(e=>isWorking(dayRecord(e,selectedDay)));
+  let present=0, late=0, sick=0, noshow=0;
   scheduled.forEach(e=>{
     const st = rec[e.name] && rec[e.name].status;
     if(st==="present") present++;
     else if(st==="late") late++;
+    else if(st==="sick") sick++;
     else if(st==="noshow") noshow++;
   });
-  const unmarked = scheduled.length - present - late - noshow;
+  const unmarked = scheduled.length - present - late - sick - noshow;
   const row = document.getElementById("tallyRow");
   row.innerHTML = `
     <div class="tally-chip"><span class="dot present"></span>Present <span class="n">${present}</span></div>
     <div class="tally-chip"><span class="dot late"></span>Late <span class="n">${late}</span></div>
+    <div class="tally-chip"><span class="dot sick"></span>Sick <span class="n">${sick}</span></div>
     <div class="tally-chip"><span class="dot noshow"></span>No-show <span class="n">${noshow}</span></div>
     <div class="tally-chip"><span class="dot unmarked"></span>Unmarked <span class="n">${unmarked}</span></div>
   `;
@@ -811,11 +863,11 @@ function shiftBarHtml(inT, outT, pos){
 function cardHtml(emp){
   const day = dayRecord(emp, selectedDay);
   const st = statusOf(emp.name);
-  const stCls = st ? (st==="noshow"?"st-noshow":st==="late"?"st-late":"st-present") : "";
+  const stCls = st ? (st==="noshow"?"st-noshow":st==="late"?"st-late":st==="sick"?"st-sick":"st-present") : "";
   const c = deptColor(emp.position);
   const typeBadge = emp.type === "FT" ? "ft" : "pt";
-  const tagLabel = st==="present"?"Present":st==="late"?"Late":st==="noshow"?"No-show":"Not set";
-  const tagCls = st==="present"?"present":st==="late"?"late":st==="noshow"?"noshow":"unmarked";
+  const tagLabel = st==="present"?"Present":st==="late"?"Late":st==="sick"?"Sick":st==="noshow"?"No-show":"Not set";
+  const tagCls = st==="present"?"present":st==="late"?"late":st==="sick"?"sick":st==="noshow"?"noshow":"unmarked";
   const actualIn = actualInOf(emp.name);
   const lateNote = (st==="late" && actualIn) ? `<div class="late-note">Actual in ${fmt12(actualIn)}</div>` : "";
   const hrs = durationHrs(day.in, day.out);
@@ -846,6 +898,9 @@ function cardHtml(emp){
           <button class="${st==='late'?'sel-late':''}" onclick="event.stopPropagation(); markLate('${encodeURIComponent(emp.name)}')">
             <span class="ico-dot" style="background:#F1C232"></span>Late
           </button>
+          <button class="${st==='sick'?'sel-sick':''}" onclick="event.stopPropagation(); markSick('${encodeURIComponent(emp.name)}')">
+            <span class="ico-dot" style="background:#7C6FDB"></span>Sick
+          </button>
           <button class="${st==='noshow'?'sel-noshow':''}" onclick="event.stopPropagation(); markNoShow('${encodeURIComponent(emp.name)}')">
             <span class="ico-dot" style="background:#CC4125"></span>No-show
           </button>
@@ -874,6 +929,7 @@ function markLate(nameEnc){
   reopen(nameEnc);
 }
 function markNoShow(nameEnc){ setStatus(decodeURIComponent(nameEnc), "noshow"); reopen(nameEnc); }
+function markSick(nameEnc){ setStatus(decodeURIComponent(nameEnc), "sick"); reopen(nameEnc); }
 function clearStatus(nameEnc){ setStatus(decodeURIComponent(nameEnc), null); reopen(nameEnc); }
 function setLateTime(nameEnc, val){ setStatus(decodeURIComponent(nameEnc), "late", val); reopen(nameEnc); }
 function reopen(nameEnc){
@@ -899,8 +955,10 @@ function passesFilters(emp){
 function renderList(){
   const onList = document.getElementById("onList");
   const offList = document.getElementById("offList");
-  const scheduled = EMPLOYEES.filter(e=>!isOff(dayRecord(e,selectedDay).in));
-  const offToday = EMPLOYEES.filter(e=>isOff(dayRecord(e,selectedDay).in));
+  const notOnSiteList = document.getElementById("notOnSiteList");
+  const scheduled = EMPLOYEES.filter(e=>isWorking(dayRecord(e,selectedDay)));
+  const notOnSite = EMPLOYEES.filter(e=>isSpecial(dayRecord(e,selectedDay)));
+  const offToday = EMPLOYEES.filter(e=>isDayOff(dayRecord(e,selectedDay)));
 
   const visibleOn = scheduled.filter(passesFilters);
 
@@ -921,6 +979,28 @@ function renderList(){
       : "";
     return `<div class="dept-group">${header}${list.map(cardHtml).join("")}</div>`;
   }).join("");
+
+  // "Not on site" — sick, vacation, on-call, etc. Tracked separately so these
+  // hours/people are visible without inflating the working headcount above.
+  const visibleNotOnSite = notOnSite.filter(passesFilters);
+  document.getElementById("notOnSiteLabel").textContent = `Not on site today (${notOnSite.length})`;
+  const reasonGroups = {};
+  visibleNotOnSite.forEach(e=>{
+    const label = specialLabel(dayRecord(e,selectedDay).in);
+    (reasonGroups[label] = reasonGroups[label] || []).push(e);
+  });
+  const reasonKeys = Object.keys(reasonGroups).sort();
+  notOnSiteList.innerHTML = reasonKeys.map(label=>{
+    const list = reasonGroups[label];
+    return `<div class="reason-group-header">${label} <span class="n">(${list.length})</span></div>` +
+      list.map(e=>`
+        <div class="off-card">
+          <div class="off-avatar">${initials(e.name)}</div>
+          <div style="flex:1">${e.name} <span style="opacity:0.6">· ${e.type} · ${e.position}</span></div>
+        </div>
+      `).join("");
+  }).join("");
+  document.getElementById("notOnSiteSection").style.display = notOnSite.length ? "block" : "none";
 
   const visibleOff = offToday.filter(passesFilters);
   document.getElementById("offToggleLabel").textContent = `Off today (${offToday.length})`;
@@ -990,11 +1070,12 @@ function deptSoftPdf(pos){
 function statusColorPdf(st){
   if(st==="present") return { bg:[230,244,234], fg:[33,122,61] };
   if(st==="late")    return { bg:[253,240,216], fg:[148,111,0] };
+  if(st==="sick")    return { bg:[237,234,251], fg:[91,78,189] };
   if(st==="noshow")  return { bg:[251,228,225], fg:[178,58,42] };
   return { bg:[238,240,242], fg:[91,100,114] };
 }
 function statusLabelPdf(st){
-  return st==="present"?"Present":st==="late"?"Late":st==="noshow"?"No-show":"Not set";
+  return st==="present"?"Present":st==="late"?"Late":st==="sick"?"Sick":st==="noshow"?"No-show":"Not set";
 }
 
 function buildPdf(){
@@ -1125,16 +1206,17 @@ function buildPdf(){
   y += deptBoxH+15;
 
   // ---------- Attendance tally ----------
-  let present=0, late=0, noshow=0;
+  let present=0, late=0, sick=0, noshow=0;
   s.scheduled.forEach(e=>{
     const st = rec[e.name] && rec[e.name].status;
-    if(st==="present") present++; else if(st==="late") late++; else if(st==="noshow") noshow++;
+    if(st==="present") present++; else if(st==="late") late++; else if(st==="sick") sick++; else if(st==="noshow") noshow++;
   });
-  const unmarked = s.scheduled.length-present-late-noshow;
+  const unmarked = s.scheduled.length-present-late-sick-noshow;
   newPageIfNeeded(16);
   const tally = [
     { label:`Present ${present}`, color:[58,166,85] },
     { label:`Late ${late}`, color:[241,194,50] },
+    { label:`Sick ${sick}`, color:[124,111,219] },
     { label:`No-show ${noshow}`, color:[204,65,37] },
     { label:`Unmarked ${unmarked}`, color:[180,186,178] }
   ];
